@@ -49,16 +49,48 @@ export default class LangchainProvider
   default_values: any = {};
 
   getConfig(options: LLMConfig) {
+    const isGpt5 = /^gpt-5/i.test(options.model || "");
+    const maxCompletionTokensRaw =
+      (options as any).max_completion_tokens ?? options.max_tokens;
+    const maxCompletionTokens =
+      maxCompletionTokensRaw != null ? Number(maxCompletionTokensRaw) : undefined;
+    const hasMaxCompletionTokens = Number.isFinite(maxCompletionTokens);
+    const baseModelKwargs =
+      options.modelKwargs && Object.keys(options.modelKwargs).length
+        ? { ...options.modelKwargs }
+        : undefined;
+    let modelKwargs = baseModelKwargs;
+
+    if (isGpt5 && modelKwargs) {
+      delete (modelKwargs as any).max_tokens;
+      if (!Object.keys(modelKwargs).length) {
+        modelKwargs = undefined;
+      }
+    }
+
     return this.cleanConfig({
       openAIApiKey: options.api_key,
 
       // ------------Necessary stuff--------------
-      modelKwargs: options.modelKwargs,
+      modelKwargs,
       modelName: options.model,
-      maxTokens: +options.max_tokens,
+      // For Responses API models (e.g., GPT‑5), LangChain expects
+      // `maxCompletionTokens` instead of `maxTokens`.
+      // Provide both to stay compatible across providers.
+      ...(!isGpt5 && hasMaxCompletionTokens
+        ? { maxTokens: maxCompletionTokens }
+        : {}),
+      ...(isGpt5 && hasMaxCompletionTokens
+        ? { maxCompletionTokens: maxCompletionTokens } as any
+        : {}),
+      ...(isGpt5 && { useResponsesAPI: true } as any),
       temperature: +options.temperature,
-      frequencyPenalty: +options.frequency_penalty || 0,
-      presencePenalty: +options.presence_penalty || 0,
+      ...(isGpt5
+        ? {}
+        : {
+            frequencyPenalty: +options.frequency_penalty || 0,
+            presencePenalty: +options.presence_penalty || 0,
+          }),
       n: options.n || 1,
       stop: options.stop || undefined,
       streaming: options.stream || false,
@@ -156,7 +188,26 @@ export default class LangchainProvider
   }
 
   getReqOptions(options: Partial<LLMConfig>) {
-    return { ...options } as any;
+    const reqOptions: any = { ...options };
+    const isGpt5 = /^gpt-5/i.test(String(options.model || ""));
+
+    if (isGpt5) {
+      delete reqOptions.max_tokens;
+      delete reqOptions.frequency_penalty;
+      delete reqOptions.presence_penalty;
+      delete reqOptions.frequencyPenalty;
+      delete reqOptions.presencePenalty;
+
+      if (reqOptions.bodyParams?.max_tokens) {
+        delete reqOptions.bodyParams.max_tokens;
+      }
+
+      if (reqOptions.modelKwargs?.max_tokens) {
+        delete reqOptions.modelKwargs.max_tokens;
+      }
+    }
+
+    return reqOptions;
   }
 
   async generate(

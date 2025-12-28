@@ -36,23 +36,45 @@ export default class LangchainOpenAIChatProvider
   }
 
   getConfig(options: LLMConfig) {
+    const isGpt5 = /^gpt-5/i.test(options.model || "");
+    const maxCompletionTokensRaw =
+      (options as any).max_completion_tokens ?? options.max_tokens;
+    const maxCompletionTokens =
+      maxCompletionTokensRaw != null ? Number(maxCompletionTokensRaw) : undefined;
+    const hasMaxCompletionTokens = Number.isFinite(maxCompletionTokens);
+    const baseModelKwargs =
+      options.modelKwargs && Object.keys(options.modelKwargs).length
+        ? { ...options.modelKwargs }
+        : undefined;
+    let modelKwargs = baseModelKwargs;
+
+    if (isGpt5 && modelKwargs) {
+      delete (modelKwargs as any).max_tokens;
+      if (!Object.keys(modelKwargs).length) {
+        modelKwargs = undefined;
+      }
+    }
+
     return this.cleanConfig({
       openAIApiKey: options.api_key,
 
       // ------------Necessary stuff--------------
-      modelKwargs: options.modelKwargs,
+      modelKwargs,
       modelName: options.model,
       // frequencyPenalty: +options.frequency_penalty || 0,
-      presencePenalty: +options.presence_penalty || 0,
+      ...(!isGpt5 && { presencePenalty: +options.presence_penalty || 0 }),
       n: options.n || 1,
       stop: options.stop || undefined,
       streaming: options.stream || false,
       maxRetries: 3,
       headers: options.headers || undefined,
+      ...(isGpt5 && { useResponsesAPI: true } as any),
 
-      bodyParams: {
-        max_completion_tokens: +options.max_tokens,
-      },
+      ...(hasMaxCompletionTokens && {
+        bodyParams: {
+          max_completion_tokens: maxCompletionTokens,
+        },
+      }),
     } as Partial<OpenAIChatInput>);
   }
 

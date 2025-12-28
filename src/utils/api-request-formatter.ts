@@ -48,16 +48,15 @@ export default class ReqFormatter {
     logger("prepareReqParameters", _params, insertMetadata, templatePath);
 
     const frontmatter: any = this.getFrontmatter(templatePath, insertMetadata);
+
     const providerId = this.plugin.textGenerator.LLMRegestry.get(frontmatter?.config?.provider)?.id as string
 
     const params = {
       ...this.plugin.settings,
       ...this.plugin.defaultSettings.LLMProviderOptions[
-      providerId ||
-      (this.plugin.settings.selectedProvider as any)],
+      providerId || (this.plugin.settings.selectedProvider as any)],
       ...this.plugin.settings.LLMProviderOptions[
-      providerId ||
-      (this.plugin.settings.selectedProvider as any)
+      providerId || (this.plugin.settings.selectedProvider as any)
       ],
       ...this.getFrontmatter(templatePath, insertMetadata),
       ..._params,
@@ -77,13 +76,19 @@ export default class ReqFormatter {
     if (params.includeAttachmentsInRequest ?? params.advancedOptions?.includeAttachmentsInRequest)
       params.prompt = await this.plugin.contextManager.splitContent(params.prompt, params.noteFile, (AI_MODELS[params.model?.toLowerCase()] || AI_MODELS["models/" + params.model?.toLowerCase()])?.inputOptions || {})
 
+    const isGpt5Model = /^gpt-5/i.test(String(params.model || ""));
+
     let bodyParams: Partial<LLMConfig & { prompt: string }> & {
       messages: Message[];
     } = {
       ...(params.model && { model: params.model }),
-      ...(params.max_tokens && { max_tokens: params.max_tokens }),
+      // OpenAI Responses API (e.g., gpt-5) expects `max_completion_tokens`.
+      // Fallback to `max_tokens` for other models/providers.
+      ...((params.max_tokens && /^gpt-5/i.test(String(params.model)))
+        ? { max_completion_tokens: params.max_tokens as any }
+        : (params.max_tokens ? { max_tokens: params.max_tokens } : {})),
       ...(params.temperature && { temperature: params.temperature }),
-      ...(params.frequency_penalty && {
+      ...(!isGpt5Model && params.frequency_penalty && {
         frequency_penalty: params.frequency_penalty,
       }),
       messages: [],
@@ -160,6 +165,21 @@ export default class ReqFormatter {
           ...bodyParams,
           ...frontmatter.bodyParams,
         };
+      }
+
+      // Normalize tokens parameter for GPT-5 (Responses API)
+      if (/^gpt-5/i.test(String(params.model || ""))) {
+        const anyBody = bodyParams as any;
+        if (anyBody.max_tokens && !anyBody.max_completion_tokens) {
+          anyBody.max_completion_tokens = anyBody.max_tokens;
+          delete anyBody.max_tokens;
+        }
+        if (anyBody.frequency_penalty !== undefined) {
+          delete anyBody.frequency_penalty;
+        }
+        if (anyBody.presence_penalty !== undefined) {
+          delete anyBody.presence_penalty;
+        }
       }
 
       if (frontmatter.context && frontmatter.context !== "prompt") {
